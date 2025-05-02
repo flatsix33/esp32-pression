@@ -192,10 +192,17 @@
 
     async function connectBLE() {
       try {
+	console.log("Démarrage recherche BLE...");
+	      
         const device = await navigator.bluetooth.requestDevice({
           filters: [{ name: "CapteurPression" }],
           optionalServices: [SERVICE_UUID]
         });
+
+	console.log("Appareil trouvé:", device.name);
+  
+        const server = await device.gatt.connect();
+        console.log("Connecté au GATT server");
 
         const server = await device.gatt.connect();
         const service = await server.getPrimaryService(SERVICE_UUID);
@@ -234,6 +241,7 @@
       } catch (error) {
         console.error("BLE Error:", error);
         document.getElementById("status").textContent = "❌ Erreur BLE";
+	alert("Erreur BLE : " + error.message);
       }
     }
 
