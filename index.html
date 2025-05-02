@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Capteur de Pression BLE</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      padding: 30px;
+      background: #f4f4f4;
+    }
+
+    .section {
+      background: #fff;
+      border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      padding: 20px;
+      margin: 20px auto;
+      max-width: 400px;
+    }
+
+    #status {
+      font-size: 1.1em;
+      margin-top: 10px;
+    }
+
+    #pressure {
+      font-size: 3em;
+      margin: 20px 0 10px;
+      color: #222;
+    }
+
+    canvas {
+      width: 100%;
+      max-width: 300px;
+      height: 150px;
+      margin: 10px auto;
+    }
+
+    input {
+      padding: 5px;
+      font-size: 1em;
+      width: 80px;
+      margin: 5px;
+    }
+
+    label {
+      font-size: 1em;
+      margin-right: 5px;
+    }
+
+    button {
+      font-size: 1em;
+      padding: 10px 20px;
+      margin: 10px;
+      border-radius: 6px;
+      background: #3498db;
+      color: white;
+      border: none;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #2980b9;
+    }
+	
+	.section.narrow {
+      max-width: 300px;
+    }
+	
+	.field {
+      margin: 10px 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .field label {
+      flex: 1;
+      text-align: left;
+      font-weight: 500;
+    }
+
+    .field input {
+      flex: 1;
+      max-width: 80px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Pression Pulvé</h1>
+
+  <div class="section">
+    <button onclick="connectBLE()">🔌 Connecter</button>
+    <div id="status">🔴 Déconnecté</div>
+  </div>
+
+  <div class="section narrow">
+    <div class="field">
+      <label for="targetPressure">Consigne (bar):</label>
+      <input type="number" id="targetPressure" value="3.0" step="0.1">
+    </div>
+    <div class="field">
+      <label for="tolerance">Tolérance (%):</label>
+      <input type="number" id="tolerance" value="10" step="1">
+    </div>
+  </div>
+
+  <div class="section">
+    <div id="pressure">--.- bar</div>
+    <canvas id="gauge" width="300" height="150"></canvas>
+  </div>
+
+  <script>
+    const SERVICE_UUID = "12345678-1234-1234-1234-1234567890ab";
+    const CHARACTERISTIC_UUID = "abcdefab-1234-5678-1234-abcdefabcdef";
+
+    let canvas = document.getElementById("gauge");
+    let ctx = canvas.getContext("2d");
+
+    let blinkInterval = null;
+    let blinkState = false;
+
+    function drawGauge(pressure, inRange, blink = false) {
+      ctx.clearRect(0, 0, 300, 150);
+
+      // Fond clignotant
+      if (blink && blinkState) {
+        ctx.beginPath();
+        ctx.arc(150, 150, 95, Math.PI, 0);
+        ctx.fillStyle = "rgba(255, 0, 0, 0.3)";
+        ctx.fill();
+      }
+
+      // Arc principal
+      ctx.beginPath();
+      ctx.arc(150, 150, 100, Math.PI, 0);
+      ctx.strokeStyle = inRange ? "#2ecc71" : "#e74c3c";
+      ctx.lineWidth = 8;
+      ctx.stroke();
+
+      // Graduations logarithmiques et linéaires
+      const logPoints = [0.1, 0.3, 1, 2, 3];
+      const linPoints = [4, 6, 8, 10];
+
+      function getAngleForPressure(p) {
+        if (p <= 3) {
+          let normalized = Math.log10(p + 0.1) / Math.log10(3.1);
+          return Math.PI - (normalized * (Math.PI / 2));
+        } else {
+          let normalized = (p - 3) / (10 - 3);
+          return (Math.PI / 2) - (normalized * (Math.PI / 2));
+        }
+      }
+
+      [...logPoints, ...linPoints].forEach(p => {
+        let a = getAngleForPressure(p);
+        let x1 = 150 + 90 * Math.cos(a);
+        let y1 = 150 - 90 * Math.sin(a);
+        let x2 = 150 + 100 * Math.cos(a);
+        let y2 = 150 - 100 * Math.sin(a);
+
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.strokeStyle = "#333";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        let xt = 150 + 65 * Math.cos(a);
+        let yt = 150 - 65 * Math.sin(a);
+        ctx.font = "11px sans-serif";
+        ctx.fillStyle = "#000";
+        ctx.fillText(p.toString(), xt - 8, yt + 4);
+      });
+
+      // Aiguille
+      let a = getAngleForPressure(pressure);
+      let x = 150 + 80 * Math.cos(a);
+      let y = 150 - 80 * Math.sin(a);
+
+      ctx.beginPath();
+      ctx.moveTo(150, 150);
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = "#000";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+
+    async function connectBLE() {
+      try {
+        const device = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "CapteurPression" }],
+          optionalServices: [SERVICE_UUID]
+        });
+
+        const server = await device.gatt.connect();
+        const service = await server.getPrimaryService(SERVICE_UUID);
+        const characteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+        characteristic.addEventListener("characteristicvaluechanged", event => {
+          const value = new TextDecoder().decode(event.target.value);
+          const pressure = parseFloat(value);
+
+          const target = parseFloat(document.getElementById("targetPressure").value);
+          const tolerance = parseFloat(document.getElementById("tolerance").value);
+          const min = target - (target * tolerance / 100);
+          const max = target + (target * tolerance / 100);
+          const inRange = pressure >= min && pressure <= max;
+
+          document.getElementById("pressure").textContent = pressure.toFixed(2) + " bar";
+          document.getElementById("status").textContent = inRange ? "🟢 OK" : "🔴 Hors plage";
+
+          if (!inRange && !blinkInterval) {
+            blinkInterval = setInterval(() => {
+              blinkState = !blinkState;
+              drawGauge(pressure, inRange, true);
+            }, 500);
+          } else if (inRange && blinkInterval) {
+            clearInterval(blinkInterval);
+            blinkInterval = null;
+            blinkState = false;
+            drawGauge(pressure, inRange, false);
+          } else {
+            drawGauge(pressure, inRange, !inRange && blinkState);
+          }
+        });
+
+        await characteristic.startNotifications();
+        document.getElementById("status").textContent = "🟢 Connecté";
+      } catch (error) {
+        console.error("BLE Error:", error);
+        document.getElementById("status").textContent = "❌ Erreur BLE";
+      }
+    }
+
+    drawGauge(0, false);
+  </script>
+</body>
+</html>
