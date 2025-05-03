@@ -195,7 +195,7 @@
 	console.log("Démarrage recherche BLE...");
 	      
         const device = await navigator.bluetooth.requestDevice({
-          filters: [{ name: "CapteurPression" }],
+          acceptAllDevices: true,
           optionalServices: [SERVICE_UUID]
         });
 
